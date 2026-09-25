@@ -10,11 +10,11 @@ Tento dokument popisuje dvě vrstvy API:
    za `ProviderAdapter` interface, aby šlo v budoucnu přidat další providery bez zásahu do
    frontendu.
 
-> **Poznámka k ověření:** Přesné názvy polí a chování Nano Banana Pro API (sync vs. async, přesný
-> formát response, limity velikosti vstupních obrázků) je nutné ověřit v aktuální oficiální
-> dokumentaci providera před implementací `NanoBananaProAdapter` — veřejně dostupné popisy se
-> mezi zdroji mírně liší a API se může měnit. Adapter vrstva je navržená právě proto, aby tahle
-> ověření/změny nezasáhly zbytek appky.
+> **Stav ověření (2026-09-25):** Sekce 3 níže je aktualizovaná podle aktuální oficiální Gemini API
+> dokumentace (endpoint, auth, `imageConfig`, formát requestu/response). Dvě věci si přesto **znovu
+> ověř těsně před implementací**, protože se často mění: (1) aktuální ceník za obrázek/rozlišení —
+> viz `docs/PRD.md` sekce 10, a (2) rate limity pro tvůj konkrétní API klíč/tier. Adapter vrstva je
+> navržená právě proto, aby případné budoucí změny API nezasáhly zbytek appky.
 
 ## 1. Autentizace
 
@@ -35,9 +35,9 @@ Vytvoří a zařadí nový generation job.
 | `prompt` | string | ano | Textový prompt |
 | `mode` | `text_to_image` \| `image_guided` \| `image_edit` | ano | |
 | `resolution` | `1K` \| `2K` \| `4K` | ano | |
-| `aspect_ratio` | `1:1` \| `3:4` \| `4:3` \| `16:9` \| `9:16` | ano | |
-| `output_count` | integer (1–4) | ano | |
-| `input_images` | file[] (0–3) | ne | JPG/PNG/WEBP |
+| `aspect_ratio` | `1:1` \| `3:4` \| `4:3` \| `16:9` \| `9:16` | ano | Kurátorovaný MVP výběr — provider (viz sekce 3) podporuje i `2:3`, `3:2`, `4:5`, `5:4`, `21:9`; jde jen o `enum` v backend validaci, přidání do UI nevyžaduje změnu adapteru |
+| `output_count` | integer (1–4) | ano | Backend to realizuje jako `output_count` paralelních volání providera (viz sekce 3.3) |
+| `input_images` | file[] (0–3) | ne | JPG/PNG/WEBP, posílají se providerovi jako base64 `inlineData` |
 | `preset_id` | string \| null | ne | Pokud job vznikl z presetu |
 
 **Response 201:**
@@ -102,6 +102,23 @@ Vrací aktuální stav jobu. Frontend na tento endpoint pollinguje každé 2–3
 }
 ```
 
+Protože každé volání providera vrací nejvýš 1 obrázek (viz sekce 3), backend při `output_count > 1`
+spouští víc paralelních volání a **job může doběhnout i s `output_images.length < output_count`**
+(např. 3 ze 4 se povedly). Status je v takovém případě stále `completed`, ale s `partial: true` a
+`error_message` obsahujícím shrnutí, které dílčí generování selhalo:
+
+```json
+{
+  "id": "job_01J...",
+  "status": "completed",
+  "partial": true,
+  "output_count": 4,
+  "output_images": [ /* jen 3 položky */ ],
+  "error_message": "1 of 4 generations failed: provider rate limit (429)",
+  "actual_cost_usd": 0.402
+}
+```
+
 Stav `failed`:
 
 ```json
@@ -161,40 +178,139 @@ Bez autentizace. Pro monitoring, že pm2/launchd proces žije.
 { "status": "ok", "uptime_seconds": 123456 }
 ```
 
-## 3. Backend ↔ Provider (Nano Banana Pro)
+## 3. Backend ↔ Provider (Nano Banana Pro / Gemini 3 Pro Image)
 
-Backend implementuje `ProviderAdapter`:
+### 3.1 Základní fakta o API
+
+Nano Banana Pro **není** samostatné REST API se svým vlastním tvarem — je to model dostupný přes
+obecné **Google Gemini `generateContent` API**. Klíčové vlastnosti, které přímo ovlivňují náš
+`ProviderAdapter`:
+
+- **Endpoint:** `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
+  kde `{model}` je `gemini-3-pro-image-preview` (stabilní alias `gemini-3-pro-image` je od 2026
+  taky funkční se stejným pricingem — použít ten, pokud je dostupný na tvém API klíči).
+- **Auth:** HTTP hlavička `x-goog-api-key: <GEMINI_API_KEY>` (alternativně `?key=` query param,
+  ale hlavička je doporučená, aby klíč nekončil v access logech).
+- **Volání je synchronní** — obrázek(y) se vrací přímo v HTTP response téhož requestu (žádné
+  `submit job` + `poll status` na straně providera). U 4K generací trvá odezva typicky desítky
+  sekund, proto backend request neblokuje frontend — viz 3.3.
+- **1 request = nejvýš 1 vygenerovaný obrázek.** Provider nemá spolehlivý `n`/`candidateCount`
+  parametr pro více obrázků v jednom volání u image modelů. Aby appka splnila požadavek na
+  **1–4 výstupy najednou**, `NanoBananaProAdapter` musí vnitřně spustit `output_count` paralelních
+  `generateContent` volání se stejným promptem, stejnými vstupními obrázky a stejným
+  `imageConfig`, a výsledky poskládat dohromady (viz 3.3).
+- **Vstupní obrázky** (0–3 v našem MVP) se posílají jako další `parts` ve stejném `contents[0]`
+  objektu, formou `inlineData` (base64 + MIME typ) — ne jako samostatný upload endpoint. Provider
+  podporuje až ~14 referenčních obrázků, takže náš limit 3 je čistě produktové rozhodnutí, ne
+  technický strop.
+- **Limit velikosti requestu:** cca 20 MB na celý request (text + base64 obrázky dohromady). Při
+  3 vstupních fotkách v rozumném rozlišení se do toho běžně vejdeme; kdyby ne, řešením je zmenšit
+  vstupy před odesláním (resize na backendu), ne Files API (zbytečná komplexita pro MVP).
+- **Podporované `imageSize` hodnoty:** `1K`, `2K`, `4K` — přesně odpovídá naší volbě rozlišení.
+- **Podporované `aspectRatio` hodnoty u modelu:** `1:1`, `2:3`, `3:2`, `3:4`, `4:3`, `4:5`, `5:4`,
+  `9:16`, `16:9`, `21:9`. MVP UI vystavuje jen podmnožinu (`1:1`, `3:4`, `4:3`, `16:9`, `9:16`),
+  zbytek lze přidat čistě úpravou frontend enumu, adapter je zvládne beze změny.
+
+### 3.2 Tvar requestu a response
+
+**Request:**
+
+```bash
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent" \
+  -H "x-goog-api-key: $GEMINI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d '{
+    "contents": [{
+      "role": "user",
+      "parts": [
+        { "text": "product shot of a red sneaker on white background, studio lighting" },
+        { "inlineData": { "mimeType": "image/jpeg", "data": "<BASE64_INPUT_IMAGE_1>" } }
+      ]
+    }],
+    "generationConfig": {
+      "responseModalities": ["TEXT", "IMAGE"],
+      "imageConfig": {
+        "aspectRatio": "1:1",
+        "imageSize": "2K"
+      }
+    }
+  }'
+```
+
+- `parts` může obsahovat 0–3 `inlineData` bloků (naše input obrázky) v libovolném pořadí vůči
+  textu; první `text` part obsahuje prompt.
+- `responseModalities` musí obsahovat `"IMAGE"`, jinak model vrátí jen text.
+
+**Response (zjednodušeno, `data` zkráceno):**
+
+```json
+{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          { "inlineData": { "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAA..." } }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ],
+  "usageMetadata": {
+    "candidatesTokenCount": 2000,
+    "totalTokenCount": 2131
+  }
+}
+```
+
+Adapter najde vygenerovaný obrázek jako `candidates[0].content.parts[].inlineData` (part s
+`inlineData`, ne `text`), dekóduje base64 do `Buffer` a uloží na disk.
+
+### 3.3 `ProviderAdapter` rozhraní
 
 ```ts
 interface ProviderAdapter {
   estimateCost(params: GenerationParams): number;
-  submitJob(params: GenerationParams, inputFiles: Buffer[]): Promise<ProviderJobHandle>;
-  getJobStatus(handle: ProviderJobHandle): Promise<ProviderJobResult>;
+  /** Vnitřně fan-outuje outputCount paralelních volání providera a agreguje výsledek. */
+  generate(
+    params: GenerationParams,
+    inputImages: { buffer: Buffer; mimeType: string }[]
+  ): Promise<ProviderGenerationResult>;
 }
 
 interface GenerationParams {
   prompt: string;
   mode: "text_to_image" | "image_guided" | "image_edit";
   resolution: "1K" | "2K" | "4K";
-  aspectRatio: "1:1" | "3:4" | "4:3" | "16:9" | "9:16";
+  aspectRatio: "1:1" | "2:3" | "3:2" | "3:4" | "4:3" | "4:5" | "5:4" | "9:16" | "16:9" | "21:9";
   outputCount: 1 | 2 | 3 | 4;
 }
 
-interface ProviderJobResult {
-  status: "processing" | "completed" | "failed";
-  outputs: { buffer: Buffer; width: number; height: number }[];
-  actualCostUsd?: number;
-  errorMessage?: string;
+interface ProviderGenerationResult {
+  outputs: { buffer: Buffer; mimeType: string }[]; // 0..outputCount položek
+  succeededCount: number;
+  failedCount: number;
+  actualCostUsd: number; // součet ceny jen za skutečně úspěšné výstupy
+  errors: string[]; // čitelné chyby z neúspěšných dílčích volání, pokud nějaká byla
 }
 ```
 
-`NanoBananaProAdapter` implementuje toto rozhraní voláním skutečného Nano Banana Pro API
-(REST/HTTPS, autentizace API klíčem v hlavičce). Konkrétní request/response tvar providera se
-mapuje na `ProviderJobResult` uvnitř adapteru — zbytek appky s tím nepracuje přímo.
+`NanoBananaProAdapter.generate()`:
 
-**Interní fronta jobů (backend):** jednoduchá in-process fronta v Next.js backendu
-(např. pole/DB tabulka se stavy `queued`/`processing`, zpracováváno sekvenčně nebo s malým
-paralelismem 1–2 jobů najednou) — pro jednoho uživatele není potřeba Redis/BullMQ.
+1. Sestaví `contents`/`generationConfig` payload jednou (prompt, input images, `imageConfig`).
+2. Spustí `Promise.allSettled` s `outputCount` kopiemi téhož `generateContent` volání
+   (s malým jitterem mezi starty, aby se nenarazilo na burst rate limit).
+3. Z úspěšných odpovědí vytáhne `inlineData` obrázky, z neúspěšných posbírá chybové hlášky.
+4. Vrátí agregovaný `ProviderGenerationResult` — **backend job** (naše vlastní `GenerationJob`
+  entita) se pak označí `completed` (i při částečném úspěchu, viz sekce 2.2) nebo `failed`
+  (pokud selhaly úplně všechny dílčí výstupy).
+
+**Interní fronta jobů (backend):** `queued`/`processing`/`completed`/`failed` v sekci 2.2 je stav
+**naší** `GenerationJob` entity v SQLite, ne stav u providera (ten je synchronní, žádný job na
+jeho straně neexistuje). Frontend pollinguje náš backend; backend uvnitř zpracování jednoho jobu
+dělá výše popsaný fan-out. Pro jednoho uživatele s max. 4 paralelními voláními na job není potřeba
+Redis/BullMQ — stačí jednoduchá in-process fronta (např. limit 1–2 jobů zpracovávaných zároveň).
 
 ## 4. Chybové kódy (shrnutí)
 

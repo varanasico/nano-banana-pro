@@ -58,9 +58,14 @@ zálohují (např. `cron` job na Mac Mini kopírující do Time Machine cílové
 - Textové prompt pole (povinné).
 - Upload 0–3 vstupních obrázků (JPG/PNG/WEBP), drag & drop.
 - Volba rozlišení: **1K / 2K / 4K**.
-- Volba poměru stran: **1:1, 3:4, 4:3, 16:9, 9:16** (podle toho, co API skutečně podporuje —
-  ověřit v `docs/API.md` sekci Provider capabilities před implementací).
-- Volba počtu výstupů: **1–4** generovaných obrázků najednou.
+- Volba poměru stran: **1:1, 3:4, 4:3, 16:9, 9:16** — kurátorovaný výběr z plné nabídky Gemini 3
+  Pro Image API (podporuje i `2:3`, `3:2`, `4:5`, `5:4`, `21:9`, viz `docs/API.md` sekce 3.1);
+  rozšíření o další poměry je čistě frontend změna.
+- Volba počtu výstupů: **1–4** generovaných obrázků najednou. Provider ale v jednom API volání
+  vrací nejvýš 1 obrázek — appka to řeší tak, že backend interně spustí `output_count` paralelních
+  volání a výsledky poskládá do jednoho jobu (fan-out, viz `docs/API.md` sekce 3.3). Pro uživatele
+  je to neviditelné, jen je nutné počítat s tím, že se výjimečně může vrátit méně výstupů, než bylo
+  požadováno (částečné selhání jednoho z paralelních volání).
 - Režimy: text-to-image (bez vstupního obrázku) a image-guided/edit (s 1–3 vstupy).
 - Odhad ceny (estimated cost) před spuštěním jobu, podle aktuálního ceníku providera.
 - Galerie výsledků s downloadem (jednotlivě i hromadně), „re-run“, „use as input“.
@@ -97,11 +102,18 @@ zálohují (např. `cron` job na Mac Mini kopírující do Time Machine cílové
 
 ### 6.3 Generování
 
-- Job se odešle na backend, backend zavolá Nano Banana Pro API (viz `docs/API.md`).
-- Zpracování asynchronní: backend job persistuje do SQLite se stavem `queued`, frontend
-  pollinguje `GET /api/jobs/:id` každé 2–3 s do dokončení.
+- Job se odešle na backend; backend zavolá Nano Banana Pro (Gemini 3 Pro Image) API, viz
+  `docs/API.md` sekce 3.
+- Samotné volání providera je **synchronní** (obrázek přijde přímo v HTTP response daného
+  requestu, žádný job/polling na straně providera), ale appka to vůči frontendu prezentuje jako
+  asynchronní job: backend persistuje `GenerationJob` do SQLite se stavem `queued`, frontend
+  pollinguje `GET /api/jobs/:id` každé 2–3 s do dokončení. Důvod: 4K generace může trvat desítky
+  sekund a při `output_count > 1` backend čeká na `output_count` paralelních volání zároveň.
 - Chybové stavy (rate limit, timeout, invalid input) se ukládají do jobu s čitelnou chybovou
-  hláškou a nespotřebovávají odhadovanou cenu, pokud provider joby při chybě neúčtuje.
+  hláškou. Při `output_count > 1` může selhat jen část paralelních volání — job pak doběhne jako
+  `completed` s `partial: true` a menším počtem výstupů, než bylo požadováno (viz `docs/API.md`
+  sekce 2.2). Neúspěšné dílčí výstupy se nezapočítávají do `actual_cost_usd`, pokud je provider
+  při chybě neúčtuje.
 
 ### 6.4 Výsledky a galerie
 
@@ -148,7 +160,7 @@ zálohují (např. `cron` job na Mac Mini kopírující do Time Machine cílové
 | Frontend | Next.js (App Router) + TypeScript + Tailwind CSS | SSR/CSR hybrid, jeden deployment celek s backendem |
 | Backend | Next.js API routes (Route Handlers) | Žádný samostatný server proces navíc |
 | Databáze | SQLite (`better-sqlite3` nebo Prisma + SQLite adapter) | Jeden soubor, žádný DB server; pro 1 uživatele plně dostačující |
-| Fronta jobů | Jednoduchá in-process/DB-backed fronta (bez Redis/BullMQ) | Nízký objem requestů (1 uživatel) nevyžaduje distribuovanou frontu; zjednodušení oproti původnímu návrhu |
+| Fronta jobů | Jednoduchá in-process/DB-backed fronta (bez Redis/BullMQ) | Provider volá se synchronně přes HTTP (žádný job na jeho straně); backend jen fan-outuje `output_count` paralelních volání na job a frontendu vystavuje vlastní `queued/processing` stav — nízký objem (1 uživatel) nevyžaduje distribuovanou frontu |
 | File storage | Lokální disk Mac Mini (`storage/uploads/`, `storage/outputs/`) | Zahrnuto do zálohy; případně později přesun na NAS/cloud |
 | Proces management | `pm2` | Auto-restart, logy, `pm2 startup` integrace s launchd |
 | Autostart | macOS `launchd` LaunchAgent (přes `pm2 startup`) | Přežije restart Mac Mini |
@@ -186,7 +198,7 @@ navíc se nezálohuje).
 | `status` | TEXT | `queued` \| `processing` \| `completed` \| `failed` |
 | `error_message` | TEXT NULL | |
 | `provider_name` | TEXT | např. `nano_banana_pro` |
-| `provider_job_id` | TEXT NULL | ID jobu u providera (pokud async) |
+| `provider_job_id` | TEXT NULL | ID jobu u providera, pokud by byl async; u Nano Banana Pro (synchronní `generateContent`) zůstává vždy `NULL` |
 | `estimated_cost_usd` | REAL | |
 | `actual_cost_usd` | REAL NULL | |
 | `preset_id` | TEXT NULL FK | pokud spuštěno z presetu |
