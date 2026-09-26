@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 function createConnection(): Database.Database {
   const db = new Database(DB_PATH);
+  db.pragma("busy_timeout = 15000");
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
