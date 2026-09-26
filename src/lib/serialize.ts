@@ -21,6 +21,7 @@ export function serializeJob(job: JobWithImages) {
     partial: Boolean(job.partial),
     prompt: job.prompt,
     mode: job.mode,
+    model: job.model,
     resolution: job.resolution,
     aspect_ratio: job.aspect_ratio,
     output_count: job.output_count,

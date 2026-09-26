@@ -1,6 +1,7 @@
 "use client";
 
 import type { Job } from "@/lib/api-client";
+import { MODEL_LABELS } from "@/lib/types";
 
 export function JobResults({
   job,
@@ -63,7 +64,7 @@ export function JobResults({
         ))}
       </div>
       <p className="text-xs text-neutral-500">
-        {job.resolution} · {job.aspect_ratio} · skutečná cena $
+        {MODEL_LABELS[job.model]} · {job.resolution} · {job.aspect_ratio} · skutečná cena $
         {(job.actual_cost_usd ?? job.estimated_cost_usd).toFixed(3)}
       </p>
     </div>

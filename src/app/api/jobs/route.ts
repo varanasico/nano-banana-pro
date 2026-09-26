@@ -3,7 +3,7 @@ import { createJob, getJob, listJobs, type UploadedFile } from "@/lib/jobs";
 import { serializeJob } from "@/lib/serialize";
 import { estimateCostUsd } from "@/lib/pricing";
 import { getSettings } from "@/lib/settings";
-import { ASPECT_RATIOS, MODES, RESOLUTIONS, type GenerationParams } from "@/lib/types";
+import { ASPECT_RATIOS, MODELS, MODES, RESOLUTIONS, type GenerationParams } from "@/lib/types";
 
 const MAX_INPUT_IMAGES = 3;
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
@@ -32,6 +32,8 @@ export async function POST(req: NextRequest) {
 
   const prompt = String(form.get("prompt") ?? "").trim();
   const mode = String(form.get("mode") ?? "");
+  const modelRaw = form.get("model");
+  const model = typeof modelRaw === "string" && modelRaw ? modelRaw : getSettings().defaultModel;
   const resolution = String(form.get("resolution") ?? "");
   const aspectRatio = String(form.get("aspect_ratio") ?? "");
   const outputCountRaw = form.get("output_count");
@@ -42,6 +44,8 @@ export async function POST(req: NextRequest) {
   if (!prompt) return NextResponse.json({ error: "prompt is required" }, { status: 400 });
   if (!MODES.includes(mode as (typeof MODES)[number]))
     return NextResponse.json({ error: `mode must be one of ${MODES.join(", ")}` }, { status: 400 });
+  if (!MODELS.includes(model as (typeof MODELS)[number]))
+    return NextResponse.json({ error: `model must be one of ${MODELS.join(", ")}` }, { status: 400 });
   if (!RESOLUTIONS.includes(resolution as (typeof RESOLUTIONS)[number]))
     return NextResponse.json(
       { error: `resolution must be one of ${RESOLUTIONS.join(", ")}` },
@@ -78,6 +82,7 @@ export async function POST(req: NextRequest) {
   const params: GenerationParams = {
     prompt,
     mode: mode as GenerationParams["mode"],
+    model: model as GenerationParams["model"],
     resolution: resolution as GenerationParams["resolution"],
     aspectRatio: aspectRatio as GenerationParams["aspectRatio"],
     outputCount,

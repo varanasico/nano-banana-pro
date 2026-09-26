@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getJob, listJobs } from "@/lib/jobs";
 import { serializeJob } from "@/lib/serialize";
 import { RerunButton } from "@/components/RerunButton";
+import { MODEL_LABELS } from "@/lib/types";
 
 const STATUS_LABEL: Record<string, string> = {
   queued: "Ve frontě",
@@ -51,7 +52,7 @@ export default async function HistoryPage({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-neutral-200">{job.prompt}</p>
               <p className="text-xs text-neutral-500">
-                {job.resolution} · {job.aspect_ratio} · {job.output_count}× ·{" "}
+                {MODEL_LABELS[job.model]} · {job.resolution} · {job.aspect_ratio} · {job.output_count}× ·{" "}
                 {STATUS_LABEL[job.status]} · ${(job.actual_cost_usd ?? job.estimated_cost_usd).toFixed(3)}{" "}
                 · {new Date(job.created_at).toLocaleString("cs-CZ")}
               </p>

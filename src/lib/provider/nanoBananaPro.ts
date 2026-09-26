@@ -4,7 +4,6 @@ import type { GenerationParams } from "../types";
 import type { GeneratedOutput, InputImage, ProviderAdapter, ProviderGenerationResult } from "./types";
 
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-3-pro-image-preview";
 
 // Small stagger between fan-out requests so 4 simultaneous outputs don't look like a burst to
 // the provider's rate limiter. See docs/API.md section 3.3.
@@ -42,7 +41,7 @@ async function generateOne(
   inputImages: InputImage[],
   apiKey: string
 ): Promise<GeneratedOutput> {
-  const res = await fetch(`${API_BASE}/${MODEL}:generateContent`, {
+  const res = await fetch(`${API_BASE}/${params.model}:generateContent`, {
     method: "POST",
     headers: {
       "x-goog-api-key": apiKey,
@@ -81,7 +80,7 @@ export const nanoBananaProAdapter: ProviderAdapter = {
   name: "nano_banana_pro",
 
   estimateCost(params) {
-    return Number((costPerOutputUsd(params.resolution) * params.outputCount).toFixed(4));
+    return Number((costPerOutputUsd(params.model, params.resolution) * params.outputCount).toFixed(4));
   },
 
   async generate(params, inputImages): Promise<ProviderGenerationResult> {
@@ -109,7 +108,7 @@ export const nanoBananaProAdapter: ProviderAdapter = {
       }
     }
 
-    const unitPrice = costPerOutputUsd(params.resolution);
+    const unitPrice = costPerOutputUsd(params.model, params.resolution);
     return {
       outputs,
       succeededCount: outputs.length,

@@ -1,15 +1,19 @@
 import { db } from "./db";
-import type { AspectRatio, Resolution } from "./types";
+import { pricingTierFor, type AspectRatio, type Model, type Resolution } from "./types";
+
+export { pricingTierFor };
 
 export interface PricingTable {
-  // USD per output image, by resolution.
+  // USD per output image, by resolution. "standard" = Nano Banana Pro, "lite" = Nano Banana lite (Flash).
   standard: Record<Resolution, number>;
+  lite: Record<Resolution, number>;
 }
 
 export interface AppSettings {
   defaultResolution: Resolution;
   defaultAspectRatio: AspectRatio;
   defaultOutputCount: number;
+  defaultModel: Model;
   costGuardrailThresholdUsd: number | null;
   pricing: PricingTable;
 }
@@ -17,15 +21,18 @@ export interface AppSettings {
 const DEFAULT_PRICING: PricingTable = {
   // Orientační ceny, ověř aktuální ceník providera — viz docs/PRD.md sekce 10.
   standard: { "1K": 0.134, "2K": 0.134, "4K": 0.24 },
+  lite: { "1K": 0.067, "2K": 0.101, "4K": 0.151 },
 };
 
 const DEFAULTS: AppSettings = {
   defaultResolution: "2K",
   defaultAspectRatio: "1:1",
   defaultOutputCount: 1,
+  defaultModel: (process.env.GEMINI_MODEL as Model) || "gemini-3-pro-image-preview",
   costGuardrailThresholdUsd: 0.5,
   pricing: DEFAULT_PRICING,
 };
+
 
 const getStmt = db.prepare<[string], { value: string }>(
   "SELECT value FROM settings WHERE key = ?"
@@ -44,6 +51,7 @@ export function getSettings(): AppSettings {
     defaultAspectRatio:
       (getRaw("default_aspect_ratio") as AspectRatio) ?? DEFAULTS.defaultAspectRatio,
     defaultOutputCount: Number(getRaw("default_output_count") ?? DEFAULTS.defaultOutputCount),
+    defaultModel: (getRaw("default_model") as Model) || DEFAULTS.defaultModel,
     costGuardrailThresholdUsd: (() => {
       const raw = getRaw("cost_guardrail_threshold_usd");
       if (raw === undefined) return DEFAULTS.costGuardrailThresholdUsd;
@@ -54,7 +62,12 @@ export function getSettings(): AppSettings {
       const raw = getRaw("pricing_json");
       if (!raw) return DEFAULT_PRICING;
       try {
-        return JSON.parse(raw) as PricingTable;
+        const parsed = JSON.parse(raw) as Partial<PricingTable>;
+        // Merge over defaults so pricing_json saved before a tier existed doesn't crash lookups.
+        return {
+          standard: { ...DEFAULT_PRICING.standard, ...parsed.standard },
+          lite: { ...DEFAULT_PRICING.lite, ...parsed.lite },
+        };
       } catch {
         return DEFAULT_PRICING;
       }
@@ -67,6 +80,7 @@ export function updateSettings(partial: Partial<AppSettings>): AppSettings {
   if (partial.defaultAspectRatio) setStmt.run("default_aspect_ratio", partial.defaultAspectRatio);
   if (partial.defaultOutputCount !== undefined)
     setStmt.run("default_output_count", String(partial.defaultOutputCount));
+  if (partial.defaultModel) setStmt.run("default_model", partial.defaultModel);
   if (partial.costGuardrailThresholdUsd !== undefined)
     setStmt.run(
       "cost_guardrail_threshold_usd",

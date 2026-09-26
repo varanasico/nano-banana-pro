@@ -12,7 +12,16 @@ import {
   type Job,
   type Settings,
 } from "@/lib/api-client";
-import { ASPECT_RATIOS, RESOLUTIONS, type AspectRatio, type Resolution } from "@/lib/types";
+import {
+  ASPECT_RATIOS,
+  MODELS,
+  MODEL_LABELS,
+  RESOLUTIONS,
+  pricingTierFor,
+  type AspectRatio,
+  type Model,
+  type Resolution,
+} from "@/lib/types";
 import { JobResults } from "./JobResults";
 
 const POLL_INTERVAL_MS = 2500;
@@ -27,6 +36,7 @@ export function Workspace() {
 
   const [settings, setSettings] = useState<Settings | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState<Model>("gemini-3-pro-image-preview");
   const [resolution, setResolution] = useState<Resolution>("2K");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("1:1");
   const [outputCount, setOutputCount] = useState(1);
@@ -41,6 +51,7 @@ export function Workspace() {
   useEffect(() => {
     getSettings().then((s) => {
       setSettings(s);
+      setModel(s.default_model);
       setResolution(s.default_resolution);
       setAspectRatio(s.default_aspect_ratio);
       setOutputCount(s.default_output_count);
@@ -54,6 +65,7 @@ export function Workspace() {
     (async () => {
       const source = await getJob(fromJob);
       setPrompt(source.prompt);
+      setModel(source.model);
       setResolution(source.resolution);
       setAspectRatio(source.aspect_ratio);
       setOutputCount(source.output_count);
@@ -98,7 +110,7 @@ export function Workspace() {
     };
   }, [job]);
 
-  const estimatedCost = settings ? settings.pricing.standard[resolution] * outputCount : 0;
+  const estimatedCost = settings ? settings.pricing[pricingTierFor(model)][resolution] * outputCount : 0;
 
   function addFiles(files: FileList | File[]) {
     const incoming = Array.from(files).slice(0, MAX_INPUT_IMAGES - inputFiles.length);
@@ -118,6 +130,7 @@ export function Workspace() {
         const result = await createJob({
           prompt,
           mode,
+          model,
           resolution,
           aspectRatio,
           outputCount,
@@ -135,6 +148,7 @@ export function Workspace() {
           partial: false,
           prompt,
           mode,
+          model,
           resolution,
           aspect_ratio: aspectRatio,
           output_count: outputCount,
@@ -152,7 +166,7 @@ export function Workspace() {
         setSubmitting(false);
       }
     },
-    [prompt, resolution, aspectRatio, outputCount, inputFiles]
+    [prompt, model, resolution, aspectRatio, outputCount, inputFiles]
   );
 
   async function useOutputAsInput(url: string, index: number) {
@@ -225,6 +239,21 @@ export function Workspace() {
               )}
             </div>
           </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-neutral-300">Model</label>
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value as Model)}
+            className="w-full rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-sm"
+          >
+            {MODELS.map((m) => (
+              <option key={m} value={m}>
+                {MODEL_LABELS[m]}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="grid grid-cols-3 gap-3">

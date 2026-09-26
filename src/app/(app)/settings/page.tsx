@@ -7,7 +7,15 @@ import {
   updateSettings,
   type Settings,
 } from "@/lib/api-client";
-import { ASPECT_RATIOS, RESOLUTIONS, type AspectRatio, type Resolution } from "@/lib/types";
+import {
+  ASPECT_RATIOS,
+  MODELS,
+  MODEL_LABELS,
+  RESOLUTIONS,
+  type AspectRatio,
+  type Model,
+  type Resolution,
+} from "@/lib/types";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -62,6 +70,20 @@ export default function SettingsPage() {
 
       <section className="space-y-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4">
         <h2 className="text-sm font-medium text-neutral-300">Výchozí hodnoty nového jobu</h2>
+        <div>
+          <label className="mb-1 block text-xs text-neutral-400">Model</label>
+          <select
+            value={settings.default_model}
+            onChange={(e) => save({ default_model: e.target.value as Model })}
+            className="w-full rounded-md border border-neutral-700 bg-neutral-950 p-2 text-sm"
+          >
+            {MODELS.map((m) => (
+              <option key={m} value={m}>
+                {MODEL_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className="mb-1 block text-xs text-neutral-400">Rozlišení</label>

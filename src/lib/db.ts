@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS generation_jobs (
   id TEXT PRIMARY KEY,
   prompt TEXT NOT NULL,
   mode TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview',
   resolution TEXT NOT NULL,
   aspect_ratio TEXT NOT NULL,
   output_count INTEGER NOT NULL,
@@ -84,7 +85,19 @@ function createConnection(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// CREATE TABLE IF NOT EXISTS above only covers a fresh DB; existing installs need columns added
+// in place. Each migration must be safe to run on every startup.
+function migrate(db: Database.Database): void {
+  const columns = db.prepare("PRAGMA table_info(generation_jobs)").all() as { name: string }[];
+  if (!columns.some((c) => c.name === "model")) {
+    db.exec(
+      "ALTER TABLE generation_jobs ADD COLUMN model TEXT NOT NULL DEFAULT 'gemini-3-pro-image-preview'"
+    );
+  }
 }
 
 // Reused across hot reloads in dev; each Next.js server process gets one connection.

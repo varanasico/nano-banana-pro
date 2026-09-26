@@ -21,8 +21,8 @@ export interface JobWithImages extends GenerationJobRow {
 
 const insertJobStmt = db.prepare(
   `INSERT INTO generation_jobs
-    (id, prompt, mode, resolution, aspect_ratio, output_count, input_image_count, status, estimated_cost_usd, preset_id)
-   VALUES (@id, @prompt, @mode, @resolution, @aspect_ratio, @output_count, @input_image_count, 'queued', @estimated_cost_usd, @preset_id)`
+    (id, prompt, mode, model, resolution, aspect_ratio, output_count, input_image_count, status, estimated_cost_usd, preset_id)
+   VALUES (@id, @prompt, @mode, @model, @resolution, @aspect_ratio, @output_count, @input_image_count, 'queued', @estimated_cost_usd, @preset_id)`
 );
 
 const insertInputImageStmt = db.prepare(
@@ -88,6 +88,7 @@ export function createJob(
     id,
     prompt: params.prompt,
     mode: params.mode,
+    model: params.model,
     resolution: params.resolution,
     aspect_ratio: params.aspectRatio,
     output_count: params.outputCount,
@@ -112,6 +113,7 @@ export function rerunJob(sourceJobId: string): JobWithImages | null {
   const params: GenerationParams = {
     prompt: source.prompt,
     mode: source.mode,
+    model: source.model,
     resolution: source.resolution,
     aspectRatio: source.aspect_ratio,
     outputCount: source.output_count,
@@ -162,6 +164,7 @@ async function processJob(jobId: string): Promise<void> {
   const params: GenerationParams = {
     prompt: job.prompt,
     mode: job.mode,
+    model: job.model,
     resolution: job.resolution,
     aspectRatio: job.aspect_ratio,
     outputCount: job.output_count,

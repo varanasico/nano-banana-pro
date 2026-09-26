@@ -1,4 +1,4 @@
-import type { AspectRatio, JobStatus, Mode, Resolution } from "./types";
+import type { AspectRatio, JobStatus, Mode, Model, Resolution } from "./types";
 
 export interface JobImage {
   id: string;
@@ -13,6 +13,7 @@ export interface Job {
   partial: boolean;
   prompt: string;
   mode: Mode;
+  model: Model;
   resolution: Resolution;
   aspect_ratio: AspectRatio;
   output_count: number;
@@ -40,8 +41,9 @@ export interface Settings {
   default_resolution: Resolution;
   default_aspect_ratio: AspectRatio;
   default_output_count: number;
+  default_model: Model;
   cost_guardrail_threshold_usd: number | null;
-  pricing: { standard: Record<Resolution, number> };
+  pricing: { standard: Record<Resolution, number>; lite: Record<Resolution, number> };
   provider_name: string;
   api_key_set: boolean;
   api_key_suffix: string | null;
@@ -57,6 +59,7 @@ export interface CostGuardrailError {
 export interface CreateJobInput {
   prompt: string;
   mode: Mode;
+  model: Model;
   resolution: Resolution;
   aspectRatio: AspectRatio;
   outputCount: number;
@@ -71,6 +74,7 @@ export async function createJob(
   const form = new FormData();
   form.set("prompt", input.prompt);
   form.set("mode", input.mode);
+  form.set("model", input.model);
   form.set("resolution", input.resolution);
   form.set("aspect_ratio", input.aspectRatio);
   form.set("output_count", String(input.outputCount));
